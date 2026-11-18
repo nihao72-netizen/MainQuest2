@@ -30,7 +30,7 @@ import rules as R
 import price_ocr as O
 
 LIVE_DEFAULTS = {"hotkey": "Ctrl+Alt+J"}
-MY_COLUMNS = ["기록ID", "시각", "내판단", "큰봉분봉", "메모", "현재가", "현재가_출처", "현재가_현재가칸", "현재가_가격축", "현재가_실패이유",
+MY_COLUMNS = ["기록ID", "시각", "차트시점", "내판단", "실제결과", "큰봉분봉", "메모", "현재가", "현재가_출처", "현재가_현재가칸", "현재가_가격축", "현재가_실패이유",
               "가격사진", "큰봉사진", "작은봉사진", "선택까지_초"]
 AI_COLUMNS = ["기록ID", "시각", "큰봉_판정", "큰봉_방향", "큰봉_근거", "작은봉_판정", "작은봉_방향", "작은봉_근거",
               "진입확인", "진입방향", "큰봉_150봉_dir3", "큰봉_150봉_dir3점수", "큰봉_150봉_cls11", "큰봉_150봉_cls11방향",
@@ -83,8 +83,8 @@ def choice_position(cfg, w, h):
     return 100, 100
 
 # ---------------- 단축키 한 번 처리 ----------------
-def capture_all(cfg, judge, tags, log_dir, rid, when):
-    """① 캡처 ② 현재가 ③ AI 판정(저장만). 선택 창을 띄우기 전에 끝낸다. 돌려주는 값: 내판단.csv에 넣을 앞부분"""
+def capture_all(cfg, judge, tags, log_dir, rid, when, ref_price=None):
+    """① 캡처 ② 현재가(기준값 ref_price와 비교) ③ AI 판정(저장만). 선택 창을 띄우기 전에 끝낸다. 돌려주는 값: 내판단.csv에 넣을 앞부분"""
     base = log_dir / "실전기록"
     imgs = {}
     for chart in C.CHART_NAMES:
@@ -92,7 +92,7 @@ def capture_all(cfg, judge, tags, log_dir, rid, when):
         if reg: imgs[chart] = C.grab_region(reg)
     big_reg = C.chart_region(cfg, C.BIG)
     sb = J.settings(cfg, C.BIG)
-    pr = O.read_price_retry(big_reg, cfg.get("price_field"), cfg.get("price_axis_width", 117), sb["bar_px"],
+    pr = O.read_price_retry(big_reg, cfg.get("price_field"), cfg.get("price_axis_width", 117), sb["bar_px"], ref_price,
                             save_path=base / "가격" / f"{rid}_0.png")
     paths, results = {}, {}
     for chart, img in imgs.items():
@@ -154,16 +154,28 @@ def ensure_columns(path, columns):
         w = csv.DictWriter(f, fieldnames=columns); w.writeheader()
         for r in rows: w.writerow({k: r.get(k, "") for k in columns})
 
-def ask_choice(root, pos, rid, price_text, auto=None, tf_default="300분"):
-    """선택 창. 돌려주는 값: (선택 또는 '취소', 메모, 큰 봉 분봉)"""
+NOW, PAST = "지금 차트", "과거 차트"
+PAST_CHOICES = ["올랐음", "내렸음", "횡보"]
+PAST_RULE = "찍은 지점에서 다음 20봉 안에 확실히 오르면 올랐음, 확실히 내리면 내렸음, 아니면 횡보"
+
+def ask_choice(root, pos, rid, price_text, auto=None, tf_default="300분", auto_mode=NOW):
+    """선택 창. 돌려주는 값: (차트시점 '지금 차트'/'과거 차트', 선택 또는 '취소', 메모, 큰 봉 분봉)
+    - 지금 차트: 오른다 / 내린다 / 모르겠다 (내 판단) → 정해 둔 시간 뒤 가격을 자동으로 확인
+    - 과거 차트: 올랐음 / 내렸음 / 횡보 (앞으로 넘겨서 본 실제 결과, 기준 PAST_RULE) → 가격 확인 안 함
+    차트시점은 매번 '지금 차트'로 시작한다 (과거 차트로 둔 채 잊고 실전 기록을 하지 않게)"""
     import tkinter as tk
     from tkinter import ttk
-    out = {"choice": "취소", "memo": "", "tf": tf_default}
+    out = {"mode": NOW, "choice": "취소", "memo": "", "tf": tf_default}
     win = tk.Toplevel(root); win.title(f"내 판단 기록 #{rid}"); win.attributes("-topmost", True)
     win.geometry(f"+{pos[0]}+{pos[1]}"); win.resizable(False, False)
     f = ("맑은 고딕", 16)
-    tk.Label(win, text="지금 큰 봉 차트, 앞으로 어떻게 될까요?", font=f).pack(padx=20, pady=(16, 4))
-    tk.Label(win, text=f"현재가 {price_text}   (AI 판정은 보여 주지 않습니다)", font=("맑은 고딕", 11), fg="#555").pack(pady=(0, 6))
+    mode = tk.StringVar(value=NOW)
+    mrow = tk.Frame(win); mrow.pack(pady=(14, 2))
+    for m in (NOW, PAST):
+        tk.Radiobutton(mrow, text=m, value=m, variable=mode, font=("맑은 고딕", 13), indicatoron=False, width=10,
+                       selectcolor="#ffd966", command=lambda: refresh()).pack(side="left", padx=4)
+    title = tk.Label(win, font=f); title.pack(padx=20, pady=(8, 2))
+    sub = tk.Label(win, font=("맑은 고딕", 11), fg="#555"); sub.pack(pady=(0, 6))
     tfrow = tk.Frame(win); tfrow.pack(pady=(0, 8))
     tk.Label(tfrow, text="큰 봉 분봉", font=("맑은 고딕", 12)).pack(side="left", padx=(0, 8))
     tfbox = ttk.Combobox(tfrow, values=TF_CHOICES, font=("맑은 고딕", 12), width=8)
@@ -171,25 +183,71 @@ def ask_choice(root, pos, rid, price_text, auto=None, tf_default="300분"):
     tk.Label(tfrow, text="(지난번 값. 분봉을 바꿨을 때만 고치세요. 목록에 없으면 직접 입력, 예: 16분)",
              font=("맑은 고딕", 9), fg="#777").pack(side="left", padx=8)
     row = tk.Frame(win); row.pack(padx=16, pady=4)
-    def pick(c):
-        out["choice"] = c; out["memo"] = memo.get().strip(); out["tf"] = tfbox.get().strip() or tf_default; win.destroy()
-    colors = {"오른다": "#d33", "내린다": "#26c", "모르겠다": "#666"}
-    for i, c in enumerate(CHOICES, 1):
-        tk.Button(row, text=f"{c}\n({i})", font=f, width=8, fg="white", bg=colors[c], activebackground=colors[c],
-                  command=lambda c=c: pick(c)).pack(side="left", padx=8)
+    def labels():
+        return CHOICES if mode.get() == NOW else PAST_CHOICES
+    def pick(i):
+        out.update(mode=mode.get(), choice=labels()[i], memo=memo.get().strip(), tf=tfbox.get().strip() or tf_default)
+        win.destroy()
+    colors = ["#d33", "#26c", "#666"]
+    btns = [tk.Button(row, font=f, width=8, fg="white", bg=c, activebackground=c, command=lambda i=i: pick(i))
+            for i, c in enumerate(colors)]
+    for b in btns: b.pack(side="left", padx=8)
     tk.Label(win, text="메모 (선택)", font=("맑은 고딕", 11)).pack(anchor="w", padx=20, pady=(12, 0))
     memo = tk.Entry(win, font=("맑은 고딕", 12), width=40); memo.pack(padx=20, pady=(0, 6))
-    tk.Label(win, text="키보드: 1 오른다 · 2 내린다 · 3 모르겠다 · Esc 취소   (메모 칸에 입력 중에는 Enter = 저장 안 됨, 버튼을 누르세요)",
-             font=("맑은 고딕", 9), fg="#777").pack(padx=12, pady=(0, 12))
+    hint = tk.Label(win, font=("맑은 고딕", 9), fg="#777"); hint.pack(padx=12, pady=(0, 12))
+    def refresh():
+        names = labels()
+        for i, b in enumerate(btns): b.config(text=f"{names[i]}\n({i + 1})")
+        if mode.get() == NOW:
+            title.config(text="지금 큰 봉 차트, 앞으로 어떻게 될까요?")
+            sub.config(text=f"현재가 {price_text}   (AI 판정은 보여 주지 않습니다)")
+            win.configure(bg=win.cget("bg"))
+        else:
+            title.config(text="과거 차트: 실제로 어떻게 됐나요?")
+            sub.config(text=f"기준: {PAST_RULE}.  가격 확인 예약은 하지 않습니다.")
+        hint.config(text=f"키보드: 1 {names[0]} · 2 {names[1]} · 3 {names[2]} · Esc 취소   (메모 칸에 입력 중에는 버튼을 누르세요)")
     def key(e):
         if win.focus_get() in (memo, tfbox): return       # 메모·분봉 칸에 입력 중에는 숫자 키를 선택으로 쓰지 않음
-        if e.char in "123" and e.char: pick(CHOICES[int(e.char) - 1])
+        if e.char in "123" and e.char: pick(int(e.char) - 1)
     win.bind("<Key>", key); win.bind("<Escape>", lambda e: win.destroy())
     win.protocol("WM_DELETE_WINDOW", win.destroy)
-    win.lift(); win.focus_force()
-    if auto: win.after(800, lambda: pick(auto))          # 시험용 자동 선택
+    refresh(); win.lift(); win.focus_force()
+    if auto:                                               # 시험용 자동 선택
+        def do_auto():
+            mode.set(auto_mode); refresh(); pick(labels().index(auto))
+        win.after(800, do_auto)
     root.wait_window(win)
-    return out["choice"], out["memo"], out["tf"]
+    return out["mode"], out["choice"], out["memo"], out["tf"]
+
+def read_mine(base):
+    """내판단.csv (+ 열 구성이 바뀌어 생긴 내판단_v2.csv 등)를 기록ID 기준으로 합쳐 읽기"""
+    import csv
+    rows = {}
+    for p in sorted(base.glob("내판단*.csv")):
+        if "백업" in p.name: continue
+        with open(p, encoding="utf-8-sig", newline="") as f:
+            for r in csv.DictReader(f): rows[r["기록ID"]] = r
+    return list(rows.values())
+
+def latest_good_price(base, max_age_h=12):
+    """최근 max_age_h시간 안에 믿을 수 있게 읽은 현재가 (현재가 OCR의 기준값). 과거 차트 기록은 뺀다"""
+    import csv
+    best = None
+    now = time.time()
+    def consider(ts, p):
+        nonlocal best
+        try: t = datetime.fromisoformat(ts).timestamp(); p = float(p)
+        except (ValueError, TypeError): return
+        if now - t <= max_age_h * 3600 and (best is None or t > best[0]): best = (t, p)
+    for r in read_mine(base):
+        if r.get("차트시점") != PAST and r.get("현재가") and r.get("현재가_출처") == "두 곳 일치":
+            consider(r["시각"], r["현재가"])
+    res = base / "가격결과.csv"
+    if res.exists():
+        with open(res, encoding="utf-8-sig", newline="") as f:
+            for r in csv.DictReader(f):
+                if r.get("상태") == "읽음" and r.get("출처") == "두 곳 일치": consider(r["읽은시각"], r["p1"])
+    return best[1] if best else None
 
 # ---------------- 3단계: 정해 둔 시간 뒤 현재가 자동 기록 ----------------
 DEFAULT_HORIZONS = [{"이름": "30분", "분": 30, "기준폭": 20},
@@ -213,7 +271,7 @@ class PriceScheduler:
     def __init__(self, cfg, base, horizons, retry_sec=30):
         self.cfg, self.base, self.horizons, self.retry_sec = cfg, base, horizons, retry_sec
         self.pending = {}            # (기록ID, 시간이름) → dict(t0, p0, due, h, next_try, 실패이유)
-        self.prev_price = None
+        self.prev_price = latest_good_price(base)     # 최근 12시간 안에 믿을 수 있게 읽은 값 (없으면 None)
 
     def add(self, rid, t0, p0):
         for h in self.horizons:
@@ -222,16 +280,13 @@ class PriceScheduler:
 
     def rebuild(self):
         """켤 때: 내판단.csv의 기록 중 가격결과.csv에 아직 없는 (기록, 시간)을 다시 잡는다"""
-        my, done = self.base / "내판단.csv", set()
+        done = set()
         res = self.base / "가격결과.csv"
         if res.exists():
             import csv
             with open(res, encoding="utf-8-sig", newline="") as f:
                 done = {(r["기록ID"], r["시간"]) for r in csv.DictReader(f)}
-        if not my.exists(): return 0
-        import csv
-        with open(my, encoding="utf-8-sig", newline="") as f:
-            rows = [r for r in csv.DictReader(f) if r["내판단"] in CHOICES]
+        rows = [r for r in read_mine(self.base) if r.get("내판단") in CHOICES and r.get("차트시점") != PAST]
         n = 0
         for r in rows:
             t0 = datetime.fromisoformat(r["시각"]).timestamp()
@@ -293,7 +348,8 @@ def main():
     ap = argparse.ArgumentParser(description="실전 기록: 단축키로 내 판단 기록 (AI 판정은 보여 주지 않음)")
     ap.add_argument("--log-dir", type=Path, default=C.ROOT / "logs")
     ap.add_argument("--hotkey", help="단축키 (기본: config의 hotkey, Ctrl+Alt+J)")
-    ap.add_argument("--auto-choice", choices=CHOICES, help="(시험용) 선택 창에서 자동으로 이것을 고름")
+    ap.add_argument("--auto-choice", choices=CHOICES + PAST_CHOICES, help="(시험용) 선택 창에서 자동으로 이것을 고름")
+    ap.add_argument("--auto-mode", choices=[NOW, PAST], default=NOW, help="(시험용) 자동 선택 때 차트시점")
     ap.add_argument("--once", action="store_true", help="(시험용) 한 번 기록하고 끝냄 (--test-horizons와 함께면 가격까지 다 읽고 끝냄)")
     ap.add_argument("--test-horizons", help="(시험용) '이름:초:기준폭,…' 예: 20초:20:5,40초:40:5")
     ap.add_argument("--retry-sec", type=float, default=30, help="현재가 읽기 실패 시 다시 시도 간격(초)")
@@ -321,30 +377,36 @@ def main():
     root = tk.Tk(); root.withdraw()
     pos = choice_position(cfg, 620, 300)
     horizons = load_horizons(cfg, args.test_horizons)
+    ensure_columns(base / "내판단.csv", MY_COLUMNS)          # 예전 기록 파일에 새 열(큰봉분봉, 차트시점, 실제결과) 더하기
     sched = PriceScheduler(cfg, base, horizons, args.retry_sec)
     n_re = sched.rebuild()
     print(f"실전 기록 대기 중: {hotkey}를 누르면 기록합니다 (HTS가 앞에 있어도 됨). 끝내려면 이 터미널에서 Ctrl+C.")
     print("가격 확인: " + ", ".join(f"{h['이름']} 뒤(기준 {h['기준폭']:g}포인트)" for h in horizons)
           + f" — 이 프로그램이 켜져 있어야 읽습니다." + (f" 이전 기록에서 다시 잡은 것 {n_re}개." if n_re else ""))
     print("run_poc.py가 켜져 있으면 AI 판정이 보이니 꺼 두세요. 마우스는 큰 봉 차트 밖에 두면 현재가를 더 잘 읽습니다.")
-    ensure_columns(base / "내판단.csv", MY_COLUMNS)          # 예전 기록 파일에 큰봉분봉 열 더하기
     state = {"busy": False, "n": 0, "last_tick": 0, "tf": last_timeframe(base)}
 
     def handle(t_press):
         state["busy"] = True
         try:
             when = datetime.fromtimestamp(t_press); rid = C.stamp(when)
-            row, warn = capture_all(cfg, judge, tags, args.log_dir, rid, when)
+            row, warn = capture_all(cfg, judge, tags, args.log_dir, rid, when, sched.prev_price)
+            if row["현재가"] != "" and row["현재가_출처"] == "두 곳 일치": sched.prev_price = row["현재가"]
             price_text = f"{row['현재가']} [{row['현재가_출처']}]" if row["현재가"] != "" else f"읽기 실패 ({row['현재가_실패이유']})"
             for w in warn: print("  ⚠", w)
-            choice, memo, tf = ask_choice(root, pos, rid, price_text, args.auto_choice, state["tf"])
+            mode, choice, memo, tf = ask_choice(root, pos, rid, price_text, args.auto_choice, state["tf"], args.auto_mode)
             state["tf"] = tf
-            row.update(내판단=choice, 큰봉분봉=tf, 메모=memo, 선택까지_초=round(time.time() - t_press, 1))
+            row.update(차트시점=mode, 내판단=choice if mode == NOW else "", 실제결과=choice if mode == PAST else "",
+                       큰봉분봉=tf, 메모=memo, 선택까지_초=round(time.time() - t_press, 1))
             RP.append_rows(base / "내판단.csv", MY_COLUMNS, [row])
             state["n"] += 1
-            if choice in CHOICES:
+            if mode == NOW and choice in CHOICES:
                 sched.add(rid, t_press, row["현재가"] if row["현재가"] != "" else None)
-            print(f"{when:%H:%M:%S} 기록 #{rid} 저장: {choice} [큰 봉 {tf}]" + (f" (메모: {memo})" if memo else "") + f", 현재가 {price_text}")
+            if mode == PAST:
+                print(f"{when:%H:%M:%S} 기록 #{rid} 저장: [과거 차트] 실제 결과 {choice} [큰 봉 {tf}]"
+                      + (f" (메모: {memo})" if memo else "") + " — 가격 확인 예약 안 함")
+            else:
+                print(f"{when:%H:%M:%S} 기록 #{rid} 저장: {choice} [큰 봉 {tf}]" + (f" (메모: {memo})" if memo else "") + f", 현재가 {price_text}")
         except Exception as e:
             print("오류:", e)
         finally:

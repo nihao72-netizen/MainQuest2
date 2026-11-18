@@ -228,12 +228,17 @@ def read_field(img, prev=None, gap=10, scale=4, tick=0.25):
 
 DEFAULT_FIELD = {"dx": 14, "dy": -37, "w": 96, "h": 24}   # 큰 봉 그래프 영역 왼쪽 위 기준 (2026-11-18 모니터 2에서 잼)
 
-def read_price_both(chart_region, field=None, axis_width=117, bar_px=11, prev=None, img=None, save_path=None, agree=5.0):
+def read_price_both(chart_region, field=None, axis_width=117, bar_px=11, prev=None, img=None, save_path=None, agree=5.0,
+                    max_jump=0.03):
     """차트 위 고정 현재가 칸 + 가격 축 현재가 상자를 '한 장으로' 찍어 같은 순간의 두 값을 비교.
     - 둘 다 읽히고 agree 포인트 이내 → 믿음 (출처 '두 곳 일치', 값은 현재가 칸). 같은 사진에서도 HTS가 두 칸을 조금 다른
       순간에 그려 1–2포인트 다를 수 있음(2026-11-18 실제 화면). 잘못 읽으면 수천 포인트 차이이거나 0.25 단위 검사에 걸림
-    - 한 곳만 읽힘 → 그 값 (출처 '현재가 칸만' / '가격 축만')
+    - 한 곳만 읽힘 → **기준값(prev)이 있고 3% 이내일 때만** 그 값 (출처 '현재가 칸만' / '가격 축만').
+      기준값이 없으면 믿지 않는다. 2026-11-18 실제 사고: 현재가 칸이 27332를 22332로 잘못 읽었는데, 그때 가격 축을
+      못 읽었고 기준값을 넘겨주지 않아 3% 검사가 동작하지 않아 그대로 기록됨. 또 과거로 넘긴 차트에서는 가격 축 상자가
+      과거 가격(13554 등)을 보여 '가격 축만'으로 기록됨
     - 둘 다 읽혔는데 다름 → 실패 (잘못 읽은 것)
+    - 두 곳이 일치하면 기준값과 상관없이 믿는다 (시장이 실제로 크게 움직였을 때 막히지 않게)
     돌려주는 값: dict(가격, 출처, 칸값, 칸글자, 칸실패, 축값, 축글자, 축실패, 실패이유, 사진)"""
     f = dict(DEFAULT_FIELD, **(field or {}))
     top_pad = max(0, -f["dy"])
@@ -243,16 +248,23 @@ def read_price_both(chart_region, field=None, axis_width=117, bar_px=11, prev=No
                                  width=chart_region["width"] + axis_width, height=chart_region["height"] + top_pad))
     fld = img.crop((f["dx"], top_pad + f["dy"], f["dx"] + f["w"], top_pad + f["dy"] + f["h"]))
     chart_axis = img.crop((0, top_pad, img.width, img.height))
-    fp, ft, fw = read_field(fld, prev)
-    ax = read_axis_price(chart_region, axis_width, bar_px, prev, img=chart_axis)
+    fp, ft, fw = read_field(fld, None)                       # 기준값 검사는 아래에서 한 곳만 읽혔을 때만
+    ax = read_axis_price(chart_region, axis_width, bar_px, None, img=chart_axis)
     ap = ax["가격"]
     res = dict(가격=None, 출처="", 칸값=fp, 칸글자=ft, 칸실패=fw, 축값=ap, 축글자=ax["글자"], 축실패=ax["실패이유"],
-               실패이유="", 사진=None)
+               실패이유="", 사진=None, 기준값=prev)
+    def single(p, name):
+        if not prev:
+            res["실패이유"] = f"{name}만 읽혔는데 비교할 기준값이 없어 믿지 않음 ({p})"
+        elif abs(p - prev) / prev > max_jump:
+            res["실패이유"] = f"{name}만 읽혔는데 기준값 {prev}와 {abs(p - prev) / prev:.1%} 차이 → 잘못 읽은 것 같음 ({p})"
+        else:
+            res.update(가격=p, 출처=f"{name}만")
     if fp is not None and ap is not None:
         if abs(fp - ap) <= agree: res.update(가격=fp, 출처="두 곳 일치")
         else: res["실패이유"] = f"두 곳 값이 다름 (현재가 칸 {fp}, 가격 축 {ap})"
-    elif fp is not None: res.update(가격=fp, 출처="현재가 칸만")
-    elif ap is not None: res.update(가격=ap, 출처="가격 축만")
+    elif fp is not None: single(fp, "현재가 칸")
+    elif ap is not None: single(ap, "가격 축")
     else: res["실패이유"] = f"둘 다 못 읽음 (현재가 칸: {fw} / 가격 축: {ax['실패이유']})"
     if save_path:
         parts = [fld]

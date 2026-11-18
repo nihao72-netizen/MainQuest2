@@ -20,7 +20,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import capture as C
-from record_live import DEFAULT_HORIZONS, direction_of
+from record_live import DEFAULT_HORIZONS, direction_of, read_mine, PAST, PAST_RULE
+
+ACT = {"올랐음": "올랐음", "내렸음": "내렸음", "횡보": "변동 작음"}     # 과거 차트 실제 결과 → 채점용 (횡보 = 변동 작음)
+THREE = {"상승": "올랐음", "하락": "내렸음", "없음": "변동 작음"}
+AI_KINDS_PAST = [  # 과거 차트에서 보는 AI (사용자 요청: 큰 봉 3분류, 큰 봉 알림, 진입 확인)
+    ("큰 봉 3분류 (150봉 창)", lambda a: a.get("큰봉_150봉_dir3", "")),
+    ("큰 봉 알림 (두 모델 일치)", lambda a: a.get("큰봉_방향", "") if a.get("큰봉_판정") == "알림" else ""),
+    ("진입 확인 (큰 봉 = 작은 봉)", lambda a: a.get("진입방향", "") if a.get("진입확인") == "예" else ""),
+]
 
 MINE = {"오른다": "상승", "내린다": "하락"}
 HIT = {"상승": "올랐음", "하락": "내렸음"}
@@ -105,8 +113,32 @@ def fmt(s):
     if not s["수"]: return "— (0건)"
     return f"{pct(s['적중률'])} ({s['맞음']}/{s['수']}) · 반대 {s['반대']} · 변동 작음 {s['변동작음']} · 변동 작음 뺀 {pct(s['변동작음_뺀_적중률'])}"
 
+def evaluate_past(base):
+    """과거 차트 기록: 사람이 앞으로 넘겨서 본 실제 결과(올랐음/내렸음/횡보, 기준 PAST_RULE)로 AI를 채점. 가격 OCR은 쓰지 않음"""
+    mine_all = read_mine(base)
+    ai = {r["기록ID"]: r for r in read_csv(base / "AI판정.csv")}
+    past = [r for r in mine_all if r.get("차트시점") == PAST]
+    items = [(r["기록ID"], ACT[r["실제결과"]], r.get("큰봉분봉") or "미입력") for r in past if r.get("실제결과") in ACT]
+    def block(sub):
+        res = {}
+        for kname, get in AI_KINDS_PAST:
+            res[kname] = score([(get(ai.get(rid, {})), a) for rid, a, _ in sub if get(ai.get(rid, {})) in HIT])
+        # 큰 봉 3분류는 '없음'도 답하므로: 없음 = 횡보로 보고 세 갈래 정답률
+        three = [(ai.get(rid, {}).get("큰봉_150봉_dir3", ""), a) for rid, a, _ in sub]
+        three = [(p, a) for p, a in three if p in ("상승", "하락", "없음")]
+        res["큰 봉 3분류 세 갈래 (없음 = 횡보)"] = dict(수=len(three), 맞음=sum(THREE[p] == a for p, a in three),
+                                                  적중률=(sum(THREE[p] == a for p, a in three) / len(three)) if three else None)
+        res["늘 오른다"] = score([("상승", a) for _, a, _ in sub]); res["늘 내린다"] = score([("하락", a) for _, a, _ in sub])
+        return res
+    by_tf = {tf: block([x for x in items if x[2] == tf]) for tf in sorted({x[2] for x in items}, key=tf_sort)}
+    unknown = sum(r.get("실제결과") == "결과 모름" for r in past)      # 사용자가 실제 결과를 기억하지 못해 채점에서 뺀 기록
+    return dict(과거기록수=len(past), 결과모름=unknown, 실제결과없음=len(past) - len(items) - unknown,
+                실제분포={k: sum(r.get("실제결과") == k for r in past) for k in ACT}, 전체=block(items), 분봉별=by_tf,
+                분봉별_건수={tf: sum(x[2] == tf for x in items) for tf in by_tf})
+
 def evaluate(base, horizons):
-    mine = {r["기록ID"]: r for r in read_csv(base / "내판단.csv")}
+    # 과거 차트 기록은 실전 기록 채점에서 뺀다 (따로 evaluate_past)
+    mine = {r["기록ID"]: r for r in read_mine(base) if r.get("차트시점") != PAST}
     ai = {r["기록ID"]: r for r in read_csv(base / "AI판정.csv")}
     prices = read_csv(base / "가격결과.csv")
     out = {"기록수": {k: sum(r["내판단"] == k for r in mine.values()) for k in ("오른다", "내린다", "모르겠다", "취소")},
@@ -210,6 +242,25 @@ def report(out, base, horizons, when):
         L.append("")
     return L
 
+def report_past(pst):
+    """과거 차트 장 (실전 기록 채점과 따로)"""
+    sh = lambda s: f"{pct(s['적중률'])} ({s['맞음']}/{s['수']})"
+    L = ["## 과거 차트 (실전 기록 채점과 따로)", "",
+         f"- 과거 차트 기록 {pst['과거기록수']}건 — 채점 {pst['과거기록수'] - pst['결과모름'] - pst['실제결과없음']}건, "
+         f"결과 모름 {pst['결과모름']}건(채점에서 뺌), 실제 결과 빈칸 {pst['실제결과없음']}건",
+         f"- 실제 결과 기준: {PAST_RULE}. 사람이 차트를 앞으로 넘겨서 보고 고름 (가격 OCR 안 씀)",
+         f"- 실제: 올랐음 {pst['실제분포']['올랐음']}, 내렸음 {pst['실제분포']['내렸음']}, 횡보 {pst['실제분포']['횡보']}",
+         "- 적중률 = AI가 상승·하락이라고 한 것 중 맞은 비율 (횡보는 틀림으로 셈). 세 갈래 정답률은 큰 봉 3분류의 없음 = 횡보로 본 것",
+         "- 진입 확인은 작은 봉 차트도 같은 과거 시점으로 넘겼을 때만 의미가 있다 (작은 봉이 지금 차트면 두 시점이 섞임)", "",
+         "| 누구 | 전체 |", "| --- | --- |"]
+    L += [f"| {'AI: ' + k if not k.startswith('늘') else k + ' (비교 기준)'} | {sh(v)} |" for k, v in pst["전체"].items()]
+    if pst["분봉별"]:
+        cols = list(pst["전체"].keys())
+        L += ["", "큰 봉 분봉별:", "", "| 큰 봉 분봉 | 건수 | " + " | ".join(cols) + " |", "| --- | --- | " + " | ".join("---" for _ in cols) + " |"]
+        L += [f"| {tf} | {pst['분봉별_건수'][tf]} | " + " | ".join(sh(v[c]) for c in cols) + " |" for tf, v in pst["분봉별"].items()]
+    L += ["", "- 과거 차트는 건수가 적고 사람이 고른 장면이라, 고르는 방식에 따라 결과가 달라질 수 있다.", ""]
+    return L
+
 def main():
     ap = argparse.ArgumentParser(description="실전 기록 결과 표 (내 판단 vs AI vs 실제 가격 변화)")
     ap.add_argument("--log-dir", type=Path, default=C.ROOT / "logs")
@@ -228,11 +279,13 @@ def main():
     when = datetime.now()
     out = evaluate(base, horizons)
     L = report(out, base, horizons, when)
+    pst = evaluate_past(base)
+    if pst["과거기록수"]: L += report_past(pst)
     args.out.mkdir(parents=True, exist_ok=True)
     md = args.out / f"실전기록_{C.stamp(when)}.md"
     md.write_text("\n".join(L) + "\n", encoding="utf-8")
     (args.out / f"실전기록_{C.stamp(when)}.json").write_text(json.dumps(dict(시각=when.isoformat(timespec="seconds"),
-        기준=horizons, **out), ensure_ascii=False, indent=1), encoding="utf-8")
+        기준=horizons, **out, 과거차트=pst), ensure_ascii=False, indent=1), encoding="utf-8")
     print("\n".join(L)); print("저장:", md)
 
 if __name__ == "__main__":
