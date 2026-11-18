@@ -1,0 +1,73 @@
+{
+ "_설명": "PoC 설정. 값은 코드가 아니라 이 파일에서 바꾼다. 좌표는 setup_region.py가 채운다. charts: 화면 위 차트 = 큰 봉, 아래 차트 = 작은 봉. bar_px = 그 차트에서 봉 하나가 차지하는 가로 픽셀(null이면 공통 bar_px).",
+ "monitor": 2,
+ "charts": {
+  "큰 봉": {
+   "위치": "위",
+   "region": {
+    "left": 3857,
+    "top": 193,
+    "width": 3640,
+    "height": 838
+   },
+   "bar_px": 11
+  },
+  "작은 봉": {
+   "위치": "아래",
+   "region": {
+    "left": 3851,
+    "top": 1211,
+    "width": 3648,
+    "height": 804
+   },
+   "bar_px": 11
+  }
+ },
+ "save_full_screenshot": false,
+ "keep_captures": 2000,
+ "window_bars": [
+  100,
+  150,
+  200
+ ],
+ "bar_px": 9,
+ "bar_px_warn_diff": 2,
+ "rule": "agree",
+ "min_dir3_score": 0.0,
+ "window_combine": "main",
+ "main_bars": 150,
+ "models_dir": "models",
+ "right_pad_px": 3,
+ "interval_min": 5,
+ "popup": true,
+ "popup_only_on_change": true,
+ "chart_gray_max_total": 0.01,
+ "chart_gray_max_tile": 0.04,
+ "practice_test": true,
+ "popup_big_alert": true,
+ "price_field": {
+  "dx": 14,
+  "dy": -37,
+  "w": 96,
+  "h": 24
+ },
+ "price_axis_width": 117,
+ "hotkey": "Ctrl+Alt+J",
+ "horizons": [
+  {
+   "이름": "30분",
+   "분": 30,
+   "기준폭": 20
+  },
+  {
+   "이름": "2시간",
+   "분": 120,
+   "기준폭": 40
+  },
+  {
+   "이름": "1일",
+   "분": 1440,
+   "기준폭": 100
+  }
+ ]
+}

@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+code/yolo_direction/_work/
+*.pt
+models/_work/
+logs/

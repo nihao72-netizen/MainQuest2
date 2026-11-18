@@ -1,0 +1,9 @@
+# CPU용 PyTorch는 아래 명령으로 먼저 설치하세요 (실행방법.md 참고)
+# pip install torch --index-url https://download.pytorch.org/whl/cpu
+transformers>=4.50
+sentencepiece
+protobuf
+scikit-learn
+pillow
+numpy
+matplotlib

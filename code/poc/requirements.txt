@@ -1,0 +1,16 @@
+# PoC 실행에 필요한 프로그램 (2026-11-17, Windows 11 / Python 3.12.5 에서 확인한 버전)
+# PyTorch(CPU)는 먼저 따로 설치: pip install torch==2.15.0 --index-url https://download.pytorch.org/whl/cpu
+ultralytics==8.4.215
+mss==10.2.0
+numpy==2.5.5
+pillow==13.0.0
+scikit-learn==1.9.1
+scipy==1.18.1
+# 현재가 OCR (윈도우 내장 OCR 연결, 실전 기록용)
+winrt-runtime==4.1.0
+winrt-Windows.Foundation==4!10.0.28000.2957
+winrt-Windows.Foundation.Collections==4!10.0.28000.2957
+winrt-Windows.Globalization==4!10.0.28000.2957
+winrt-Windows.Graphics.Imaging==4!10.0.28000.2957
+winrt-Windows.Media.Ocr==4!10.0.28000.2957
+winrt-Windows.Storage.Streams==4!10.0.28000.2957
